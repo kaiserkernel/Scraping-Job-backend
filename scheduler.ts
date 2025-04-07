@@ -1,5 +1,5 @@
-const cron = require('node-cron');
-import scrapeGoogleJobs from './scrapers/googleJobs'; // Make sure this is a default export
+import cron from 'node-cron';
+import scrapeGoogleJobs from './src/scrapers/googleJobs'; // Make sure this is a default export
 
 // Schedule the job to run every 6 hours
 cron.schedule('0 */6 * * *', async () => {

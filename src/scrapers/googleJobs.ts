@@ -1,8 +1,8 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
 import Job from '../models/Job';
 import { createHash } from 'crypto';
-import detectFraud from '../utils/fraudDetector';
-import deduplicate from '../utils/deduplicate';
+import { detectFraud } from '../utils/fraudDetector';
+import { deduplicate } from '../utils/deduplicate';
 
 interface ScrapedJob {
   title: string;
@@ -41,7 +41,7 @@ export default async function scrapeAllGoogleJobs(): Promise<void> {
         const scrollBox = document.querySelector('.gws-plugins-horizon-job__tl-lvc') as HTMLElement;
         scrollBox?.scrollBy(0, 1000);
       });
-      await page.waitForTimeout(1500);
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
       const newHeight = await page.evaluate(() => {
         const el = document.querySelector('.gws-plugins-horizon-job__tl-lvc') as HTMLElement;
