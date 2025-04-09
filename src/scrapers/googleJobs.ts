@@ -1,8 +1,11 @@
-import puppeteer, { Browser, Page } from 'puppeteer';
+import dotenv from 'dotenv';
+import axios from 'axios';
 import Job from '../models/Job';
 import { createHash } from 'crypto';
 import { detectFraud } from '../utils/fraudDetector';
 import { deduplicate } from '../utils/deduplicate';
+
+dotenv.config();
 
 interface ScrapedJob {
   title: string;
@@ -13,74 +16,47 @@ interface ScrapedJob {
   url: string;
 }
 
-export default async function scrapeAllGoogleJobs(): Promise<void> {
-  const browser : Browser = await puppeteer.launch({ headless: false });
-  const page : Page = await browser.newPage();
+const API_KEY = process.env.GOOGLE_API_KEY || "api key";  // Replace with your actual API key
+const CSE_ID = process.env.GOOGLE_API_ID || "api id";  // Replace with your CSE ID
 
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0 Safari/537.36'
-  );
-
+async function fetchGoogleJobs(query: string): Promise<ScrapedJob[]> {
   try {
-    // Step 1: Go to Google Search
-    await page.goto('https://www.google.com/search?q=job', { waitUntil: 'networkidle2' });
-
-    // Step 2: Click on the Google Job widget
-    await page.waitForSelector('div[role="region"]');
-    await page.click('div[role="region"]');
-
-    // Step 3: Wait for the job listings panel
-    await page.waitForSelector('.PwjeAc');
-
-    // Step 4: Scroll to load more jobs
-    let prevHeight = 0;
-    let tries = 0;
-
-    while (tries < 5) {
-      await page.evaluate(() => {
-        const scrollBox = document.querySelector('.gws-plugins-horizon-job__tl-lvc') as HTMLElement;
-        scrollBox?.scrollBy(0, 1000);
-      });
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      const newHeight = await page.evaluate(() => {
-        const el = document.querySelector('.gws-plugins-horizon-job__tl-lvc') as HTMLElement;
-        return el?.scrollHeight || 0;
-      });
-
-      if (newHeight === prevHeight) tries++;
-      else tries = 0;
-
-      prevHeight = newHeight;
-    }
-
-    // Step 5: Scrape visible job cards
-    const jobs: ScrapedJob[] = await page.evaluate(() => {
-      const cards = document.querySelectorAll('.PwjeAc');
-      const jobList: ScrapedJob[] = [];
-
-      cards.forEach((card) => {
-        const title = (card.querySelector('.BjJfJf') as HTMLElement)?.innerText;
-        const company = (card.querySelector('.vNEEBe') as HTMLElement)?.innerText;
-        const location = (card.querySelector('.Qk80Jf') as HTMLElement)?.innerText;
-        const date = (card.querySelector('.LL4CDc') as HTMLElement)?.innerText;
-
-        if (title && company) {
-          jobList.push({
-            title,
-            company,
-            location: location || '',
-            description: '', // Could enhance by clicking each job later
-            datePosted: date || '',
-            url: '', // No URL available directly
-          });
-        }
-      });
-
-      return jobList;
+    const response = await axios.get('https://www.googleapis.com/customsearch/v1', {
+      params: {
+        key: API_KEY,
+        cx: CSE_ID,
+        q: query,  // The search query, e.g., 'software developer jobs'
+      },
     });
 
-    // Step 6: Store jobs in DB
+    const jobs: ScrapedJob[] = response.data.items.map((item: any) => ({
+      title: item.title || '',
+      company: item.pagemap?.organization?.[0]?.name || '',  // Using the organization name if available
+      location: item.pagemap?.localbusiness?.[0]?.address?.locality || '',  // Extract location if available
+      description: item.snippet || '',  // Snippet as job description
+      datePosted: item.pagemap?.metatags?.[0]?.['article:published_time'] || '',  // Try to get posted date if available
+      url: item.link,  // URL of the job post
+    }));
+
+    return jobs;
+  } catch (error) {
+    console.error('Error fetching jobs from Google Custom Search API:', error);
+    return [];
+  }
+}
+
+export default async function scrapeAllGoogleJobs(): Promise<void> {
+  const query = 'job';
+  try {
+    // Step 1: Fetch Google Jobs using the Custom Search API
+    const jobs = await fetchGoogleJobs(query);
+console.log(jobs, "jobs")
+    if (jobs.length === 0) {
+      console.log('No jobs found');
+      return;
+    }
+
+    // Step 2: Store jobs in DB
     for (const job of jobs) {
       const hash = createHash('sha256')
         .update(`${job.title}${job.company}${job.location}${job.datePosted}`)
@@ -93,10 +69,8 @@ export default async function scrapeAllGoogleJobs(): Promise<void> {
       await Job.create({ ...job, hash, isFraud });
     }
 
-    console.log(`Google Jobs Widget: Saved ${jobs.length} jobs`);
+    console.log(`Saved ${jobs.length} jobs`);
   } catch (err: any) {
-    console.error('Full Google Jobs error:', err.message || err);
-  } finally {
-    await browser.close();
+    console.error('Error in scraping jobs:', err.message || err);
   }
 }
